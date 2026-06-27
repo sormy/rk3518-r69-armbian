@@ -1,0 +1,11 @@
+#!/bin/sh
+# Login MOTD hint shown until Bluetooth is actually up (hci0 attached) — not merely until bluez is
+# installed. Self-silences once BT works. Staged to /etc/update-motd.d/.
+[ -e /sys/class/bluetooth/hci0 ] && exit 0
+if command -v hciattach >/dev/null 2>&1; then
+  printf '\nBluetooth: bluez is installed but not enabled yet. Finish setup:\n'
+  printf '  sudo /usr/local/sbin/r69-firstboot\n'
+else
+  printf '\nBluetooth is off: bluez is not installed. To enable it:\n'
+  printf '  sudo apt install bluez  &&  sudo /usr/local/sbin/r69-firstboot\n'
+fi

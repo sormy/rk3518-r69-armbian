@@ -1,0 +1,3 @@
+Module                  Size  Used by
+aic8800_fdrv          434176  0 
+aic8800_bsp            77824  1 aic8800_fdrv

@@ -1,0 +1,23 @@
+gpiochip0: GPIOs 0-31, parent: platform/ff610000.gpio, gpio0:
+ gpio-0   (                    |pa-ctl              ) out lo 
+ gpio-2   (                    |hpd                 ) in  lo IRQ 
+
+gpiochip1: GPIOs 32-63, parent: platform/ffaf0000.gpio, gpio1:
+
+gpiochip2: GPIOs 64-95, parent: platform/ffb00000.gpio, gpio2:
+
+gpiochip3: GPIOs 96-127, parent: platform/ffb10000.gpio, gpio3:
+ gpio-98  (                    |bt_default_rts      ) in  lo 
+ gpio-106 (                    |reset               ) out hi ACTIVE LOW
+ gpio-108 (                    |bt_default_wake     ) out hi 
+ gpio-113 (                    |bt_default_reset    ) out lo 
+
+gpiochip4: GPIOs 128-159, parent: platform/ffb20000.gpio, gpio4:
+ gpio-129 (                    |vcc-sd              ) out hi ACTIVE LOW
+ gpio-136 (                    |fd650_sda           ) out hi 
+ gpio-137 (                    |fd650_scl           ) out hi 
+ gpio-139 (                    |standby             ) out hi ACTIVE LOW
+ gpio-141 (                    |vcc5v0-host-regulato) out hi 
+ gpio-142 (                    |vccio_sd            ) out hi 
+ gpio-145 (                    |normal              ) out lo 
+ gpio-146 (                    |vcc5v0-otg-regulator) out hi 

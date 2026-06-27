@@ -1,0 +1,15 @@
+#!/bin/sh
+# systemd system-sleep hook ($1 = pre|post, $2 = suspend|hibernate|...).
+# Show red 'standby' (blue off) while suspended, restore blue on resume. Needs retain-state-suspended
+# on the LED nodes (the LED core blanks LEDs across suspend otherwise). Note: on this box the IR
+# remote does NOT wake s2idle, so suspend isn't a wake-able state yet — this just keeps the LED honest.
+case "$1" in
+  pre)
+    echo 0 > /sys/class/leds/power/brightness   2>/dev/null   # blue off
+    echo 1 > /sys/class/leds/standby/brightness 2>/dev/null   # red on
+    ;;
+  post)
+    echo 0 > /sys/class/leds/standby/brightness 2>/dev/null   # red off
+    echo 1 > /sys/class/leds/power/brightness   2>/dev/null   # blue on
+    ;;
+esac

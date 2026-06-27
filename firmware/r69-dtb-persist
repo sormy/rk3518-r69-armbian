@@ -1,0 +1,11 @@
+#!/bin/sh
+# Kernel postinst.d hook: reinstall the R69 device tree into a freshly-installed kernel's dtb dir.
+# A kernel apt-upgrade drops a fresh dtb-<newver>/ holding the STOCK DTBs; without this our board.dtb
+# wouldn't be in the new kernel's dtb dir and the box would boot the wrong tree. Reads fdtfile from
+# armbianEnv.txt; the master copy lives at /usr/local/share/r69/board.dtb.
+version="$1"
+src=/usr/local/share/r69/board.dtb
+fdt=$(sed -n 's/^fdtfile=//p' /boot/armbianEnv.txt 2>/dev/null)
+[ -n "$version" ] && [ -f "$src" ] && [ -n "$fdt" ] || exit 0
+dst="/boot/dtb-$version/$fdt"
+mkdir -p "$(dirname "$dst")" && cp "$src" "$dst"

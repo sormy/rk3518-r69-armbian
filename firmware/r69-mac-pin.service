@@ -1,0 +1,13 @@
+[Unit]
+Description=Pin wlan0 + end0 MACs (vendor OUI + cpuid)
+After=systemd-modules-load.service
+Before=network-pre.target wpa_supplicant.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/r69-mac-pin
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

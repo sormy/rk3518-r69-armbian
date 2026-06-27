@@ -1,0 +1,58 @@
+#!/bin/sh
+# R69 first-boot setup — IDEMPOTENT (safe to re-run; each step checks its own state). These are the
+# one-time things that can only run on the live system, not at image-build time. Pulled once by
+# r69-firstboot.service (done-file guarded); the per-boot work (MAC pin, BT attach) lives elsewhere.
+set -e
+
+# --- AIC8800D80 SDIO Wi-Fi ------------------------------------------------------------------------
+# The in-tree aic8800_sdio driver and aic8800-usb-dkms export the same symbol, so the USB DKMS must
+# be REMOVED (a blacklist isn't enough); and the driver opens un-suffixed firmware names the package
+# ships suffixed.
+if dpkg -l aic8800-usb-dkms 2>/dev/null | grep -q '^ii'; then
+  apt-get remove -y aic8800-usb-dkms || dpkg --remove --force-depends aic8800-usb-dkms
+fi
+FW=/lib/firmware/aic8800/SDIO/aic8800D80
+if [ -d "$FW" ]; then
+  for pair in \
+    "fw_patch_table_8800d80_u02.bin fw_patch_table.bin" \
+    "fw_patch_8800d80_u02.bin fw_patch.bin" \
+    "fmacfw_8800d80_u02.bin fmacfw.bin" \
+    "fw_adid_8800d80_u02.bin fw_adid.bin" \
+    "lmacfw_rf_8800d80_u02.bin lmacfw_rf.bin" \
+    "aic_userconfig_8800d80.txt aic_userconfig.txt"; do
+    set -- $pair
+    [ -e "$FW/$1" ] && ln -sf "$1" "$FW/$2"
+  done
+fi
+depmod -a || true
+# auto-load aic8800_fdrv on later boots — safe now the conflicting USB DKMS is gone. (Baking this into
+# the image made systemd-modules-load FAIL on the very first boot, before the removal.)
+echo aic8800_fdrv > /etc/modules-load.d/aic8800.conf
+modprobe aic8800_fdrv 2>/dev/null || true
+
+# --- Pin our hand-built u-boot --------------------------------------------------------------------
+# The stock linux-u-boot-* postinst reflashes the boot device on upgrade (write_uboot_platform),
+# which would overwrite our mainline u-boot (BL31 too old -> "Unknown SoC" brick).
+ub=$(dpkg-query -W -f='${Package}\n' 'linux-u-boot-*' 2>/dev/null | head -1)
+[ -n "$ub" ] && apt-mark hold "$ub" >/dev/null 2>&1 || true
+
+# --- IR remote driver (DKMS) — the remote + power button need it. The setup script is offline-only
+# (it never downloads — errors if the build tools/headers aren't already in the image). Idempotent.
+if ! dkms status 2>/dev/null | grep -q '^rockchip-pwm-remotectl-r69'; then
+  rockchip-pwm-remotectl-r69-setup
+fi
+
+# --- Bluetooth — configured ONLY if bluez is already installed. We NEVER install it (first boot must
+# stay fully offline). To enable BT: install bluez yourself, then re-run this script. See README / the
+# login hint. If bluez is absent this is a clean no-op.
+if command -v hciattach >/dev/null 2>&1; then
+  if [ -f /etc/bluetooth/main.conf ] && ! grep -qiE '^[[:space:]]*AutoEnable[[:space:]]*=[[:space:]]*true' /etc/bluetooth/main.conf; then
+    if grep -qiE '^[[:space:]]*#?[[:space:]]*AutoEnable=' /etc/bluetooth/main.conf; then
+      sed -i -E 's/^[[:space:]]*#?[[:space:]]*AutoEnable=.*/AutoEnable=true/' /etc/bluetooth/main.conf
+    else
+      printf '\n[Policy]\nAutoEnable=true\n' >> /etc/bluetooth/main.conf
+    fi
+  fi
+  systemctl restart bluetooth 2>/dev/null || true
+  systemctl start r69-bt 2>/dev/null || true
+fi

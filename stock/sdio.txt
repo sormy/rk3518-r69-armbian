@@ -1,0 +1,12 @@
+== /sys/bus/sdio/devices/mmc0:390b:1/ ==
+DRIVER=aicwf_sdio
+SDIO_CLASS=07
+SDIO_ID=C8A1:0082
+SDIO_REVISION=0.0
+MODALIAS=sdio:c07vC8A1d0082
+== /sys/bus/sdio/devices/mmc0:390b:2/ ==
+DRIVER=aicbsp_sdio
+SDIO_CLASS=07
+SDIO_ID=C8A1:0182
+SDIO_REVISION=0.0
+MODALIAS=sdio:c07vC8A1d0182

@@ -1,0 +1,14 @@
+[Unit]
+Description=R69 AIC8800 Bluetooth (attach hci_uart on the ffa00000 BT UART)
+Documentation=man:hciattach(1)
+Before=bluetooth.service
+Wants=bluetooth.service
+ConditionPathExists=/sys/devices/platform/ffa00000.serial
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/r69-bt
+
+[Install]
+WantedBy=multi-user.target

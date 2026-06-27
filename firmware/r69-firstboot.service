@@ -1,0 +1,17 @@
+[Unit]
+# One-time R69 setup that can only run on the live system: AIC8800 Wi-Fi fixup, u-boot hold, and the
+# IR-remote DKMS build (so the remote + power button work out of the box). Offline — the image ships
+# kernel headers. Idempotent script + done-file guard; done is written only on success, so a failed
+# run retries next boot.
+Description=R69 first-boot setup (Wi-Fi fixup, u-boot hold, IR remote DKMS build)
+ConditionPathExists=!/var/lib/r69-firstboot.done
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/r69-firstboot
+ExecStartPost=/bin/touch /var/lib/r69-firstboot.done
+
+[Install]
+WantedBy=multi-user.target

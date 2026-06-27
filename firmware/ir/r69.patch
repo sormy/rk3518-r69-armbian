@@ -1,0 +1,62 @@
+# r69-ir — bind the bundled IR remote's PWM-capture receiver (pwm3) on the RK3518 R69.
+#
+# Authored against pristine upstream, pinned by commit (not the moving branch):
+#   repo:   armbian/linux-rockchip
+#   branch: rk-6.1-rkr5.1
+#   commit: 31cd4f11b5ec31fc361256a04237416f278b62b2
+#   file:   drivers/input/remotectl/rockchip_pwm_remotectl.c
+#   raw:    https://raw.githubusercontent.com/armbian/linux-rockchip/31cd4f11b5ec31fc361256a04237416f278b62b2/drivers/input/remotectl/rockchip_pwm_remotectl.c
+# (the .h is used pristine — unpatched.)
+#
+# Three changes so the out-of-tree module can claim the shared PWM-block IRQ and link cleanly:
+#   1. Share the IRQ: IRQF_NO_SUSPEND -> IRQF_NO_SUSPEND | IRQF_SHARED on the rk_pwm_irq request
+#      (dev_id is already ddata, which IRQF_SHARED requires).
+#   2. Drop the non-exported irq_to_desc(): use exported irq_get_irq_data()/irqd_to_hwirq()
+#      (struct irq_desc *desc -> struct irq_data *irqd). Keeps the PSCI IR-wake path intact.
+#   3. Rename the driver to "remotectl-pwm-r69" so it doesn't collide with the built-in's reserved
+#      name (DT matching is by compatible, so the rename is cosmetic).
+#
+# Apply with: patch -p1 < r69.patch
+--- a/rockchip_pwm_remotectl.c	2026-06-26 18:00:41.663328041 +0000
++++ b/rockchip_pwm_remotectl.c	2026-06-26 18:00:41.669994627 +0000
+@@ -754,7 +754,7 @@
+ {
+ 	struct rkxx_remotectl_drvdata *ddata = platform_get_drvdata(pdev);
+ 	struct device_node *np = pdev->dev.of_node;
+-	struct irq_desc *desc;
++	struct irq_data *irqd;
+ 	int support_psci = 0;
+ 	int irq;
+ 	int hwirq;
+@@ -771,10 +771,10 @@
+ 	if (!support_psci)
+ 		goto end;
+ 	irq = ddata->irq;
+-	desc = irq_to_desc(irq);
+-	if (!desc || !desc->irq_data.domain)
++	irqd = irq_get_irq_data(irq);
++	if (!irqd || !irqd->domain)
+ 		goto end;
+-	hwirq = desc->irq_data.hwirq;
++	hwirq = irqd_to_hwirq(irqd);
+ 	ret = sip_smc_remotectl_config(REMOTECTL_SET_IRQ, hwirq);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "set irq err, set support_psci to 0 !!\n");
+@@ -978,7 +978,7 @@
+ 	cpumask_set_cpu(cpu_id, &cpumask);
+ 	irq_set_affinity_hint(irq, &cpumask);
+ 	ret = devm_request_irq(&pdev->dev, irq, ddata->pwm_data->funcs.irq_handler,
+-			       IRQF_NO_SUSPEND, "rk_pwm_irq", ddata);
++			       IRQF_NO_SUSPEND | IRQF_SHARED, "rk_pwm_irq", ddata);
+ 	if (ret) {
+ 		dev_err(&pdev->dev, "cannot claim IRQ %d\n", irq);
+ 		goto error_irq;
+@@ -1073,7 +1073,7 @@
+ 
+ static struct platform_driver rk_pwm_driver = {
+ 	.driver = {
+-		.name = "remotectl-pwm",
++		.name = "remotectl-pwm-r69",
+ 		.of_match_table = rk_pwm_of_match,
+ #ifdef CONFIG_PM
+ 		.pm = &remotectl_pm_ops,

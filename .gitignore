@@ -1,0 +1,8 @@
+/images/
+/backup/
+/build/
+/uboot-build/
+*.tmp
+.DS_Store
+*.swp
+*~

@@ -1,0 +1,17 @@
+#!/bin/sh
+# Pin wlan0 + end0 to stable per-unit MACs: vendor OUI + sha256(cpuid) suffix. Runs every boot
+# (Before=network-pre.target) so the DHCP lease/IP stops churning. Why this, not a static MAC in the
+# DTB (which would be identical on every flashed box): HOW-IT-WAS-DONE.md.
+cpuid=$(tr -d '\000' < /proc/device-tree/serial-number 2>/dev/null); [ -n "$cpuid" ] || exit 0
+pin() {
+  i=$1; oui=$2; n=0
+  while [ ! -e "/sys/class/net/$i" ] && [ "$n" -lt 50 ]; do sleep 0.2; n=$((n+1)); done
+  [ -e "/sys/class/net/$i" ] || return
+  h=$(printf '%s-%s' "$cpuid" "$i" | sha256sum | cut -c1-6)
+  mac="$oui:$(printf %s "$h"|cut -c1-2):$(printf %s "$h"|cut -c3-4):$(printf %s "$h"|cut -c5-6)"
+  ip link set "$i" down 2>/dev/null
+  ip link set "$i" address "$mac" && logger -t r69-mac-pin "pinned $i=$mac" || logger -t r69-mac-pin "FAILED $i=$mac"
+  ip link set "$i" up 2>/dev/null
+}
+pin wlan0 88:00:33
+pin end0  c4:2a:fe

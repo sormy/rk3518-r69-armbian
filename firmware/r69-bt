@@ -1,0 +1,29 @@
+#!/bin/sh
+# Bring up the AIC8800 Bluetooth controller as hci0 (HCI H4 @1.5Mbaud).
+set -e
+
+# no bluez yet (minimal image) -> nothing to attach with; skip cleanly so the service isn't "failed"
+command -v hciattach >/dev/null 2>&1 || { echo "r69-bt: bluez not installed; skipping"; exit 0; }
+
+# the BT UART is ffa00000; resolve its /dev/ttyN by hardware address, not a fixed ttyS number
+tty=$(ls /sys/devices/platform/ffa00000.serial/tty/ 2>/dev/null | head -1)
+[ -n "$tty" ] || { echo "r69-bt: ffa00000.serial (Bluetooth UART) not found" >&2; exit 1; }
+dev="/dev/$tty"
+
+# defensive: make sure nothing else owns the BT UART (a stray serial-getty did, once)
+systemctl mask --now "serial-getty@$tty.service" 2>/dev/null || true
+fuser -k "$dev" 2>/dev/null || true
+sleep 1
+
+# unblock the rockchip BT rfkill
+for r in /sys/class/rfkill/*; do
+  [ "$(cat "$r/type" 2>/dev/null)" = bluetooth ] && echo 0 > "$r/soft" 2>/dev/null || true
+done
+
+# attach hci_uart (forks; the child holds hci0)
+/usr/bin/hciattach -s 1500000 "$dev" any 1500000 flow nosleep
+
+# a per-hci0 rfkill appears after attach — clear everything so bluetoothd can power on
+sleep 2
+for r in /sys/class/rfkill/*; do echo 0 > "$r/soft" 2>/dev/null || true; done
+logger -t r69-bt "hci0 attached on $dev"

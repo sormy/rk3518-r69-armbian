@@ -1,0 +1,48 @@
+00200000-083fffff : System RAM
+  00208000-016fffff : Kernel code
+  01800000-01b705f7 : Kernel data
+08c00000-5fffffff : System RAM
+fe480000-fe48bfff : fe480000.sram sram@fe480000
+fe500000-fe507fff : dwc3@fe500000
+  fe500000-fe507fff : xhci-hcd.4.auto dwc3@fe500000
+fe50c100-fe8fffff : fe500000.dwc3 dwc3@fe500000
+ff100000-ff13ffff : ff100000.usb usb@ff100000
+ff140000-ff17ffff : ff140000.usb usb@ff140000
+ff610000-ff6101ff : ff610000.gpio gpio@ff610000
+ff740800-ff74083f : ff740800.iommu iommu@ff740800
+ff740900-ff74093f : ff740800.iommu iommu@ff740800
+ff78f000-ff78f03f : ff78f000.iommu iommu@ff78f000
+ff7c0800-ff7c083f : ff7c0800.iommu iommu@ff7c0800
+ff840000-ff842fff : ff840000.vop regs
+ff845000-ff845fff : ff840000.vop gamma_lut
+ff846400-ff846bff : ff840000.vop acm_regs
+ff847e00-ff847eff : ff847e00.iommu iommu@ff847e00
+ff850f00-ff850fff : ff850f00.iommu iommu@ff850f00
+ff860800-ff8608ff : ff860800.iommu iommu@ff860800
+ff870480-ff8704bf : ff870480.iommu iommu@ff870480
+ff8d0000-ff8effff : ff8d0000.hdmi hdmi@ff8d0000
+ff930000-ff9303ff : ff930000.dfi dfi@ff930000
+ffa00000-ffa0001f : serial
+ffa90030-ffa9003f : ffa90030.pwm pwm@ffa90030
+ffad0000-ffad03ff : ffad0000.tsadc tsadc@ffad0000
+ffae0000-ffaeffff : ffae0000.saradc saradc@ffae0000
+ffaf0000-ffaf01ff : ffaf0000.gpio gpio@ffaf0000
+ffb00000-ffb001ff : ffb00000.gpio gpio@ffb00000
+ffb10000-ffb101ff : ffb10000.gpio gpio@ffb10000
+ffb20000-ffb201ff : ffb20000.gpio gpio@ffb20000
+ffb70000-ffb70fff : ffb70000.sai sai@ffb70000
+ffb90000-ffb90fff : ffb90000.sai sai@ffb90000
+ffbc0000-ffbc0fff : ffbc0000.spdif spdif@ffbc0000
+ffbd0000-ffbdffff : ffbd0000.ethernet ethernet@ffbd0000
+ffbf0000-ffbfffff : ffbf0000.mmc mmc@ffbf0000
+ffc20000-ffc23fff : ffc20000.mmc mmc@ffc20000
+ffc30000-ffc33fff : ffc30000.mmc mmc@ffc30000
+ffc40000-ffc41fff : ffc40000.crypto crypto@ffc40000
+ffc50000-ffc501ff : ffc50000.rng rng@ffc50000
+ffce0000-ffce3fff : ffce0000.otp otp@ffce0000
+ffd60000-ffd63fff : dma-controller@ffd60000
+  ffd60000-ffd63fff : ffd60000.dma-controller dma-controller@ffd60000
+ffdc0000-ffdcffff : ffdc0000.phy phy@ffdc0000
+ffdf0000-ffdfffff : ffdf0000.usb2-phy usb2-phy@ffdf0000
+ffe00000-ffe0ffff : ffe00000.hdmiphy hdmiphy@ffe00000
+ffe10000-ffe10fff : ffe10000.acodec acodec@ffe10000

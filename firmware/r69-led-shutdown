@@ -1,0 +1,11 @@
+#!/bin/sh
+# systemd system-shutdown hook ($1 = poweroff|reboot|halt|kexec).
+# This no-PMIC box can't cut power, so `poweroff` parks it still-powered; light the red 'standby'
+# LED and blank blue so "off" shows an indicator, like stock Android. Needs retain-state-shutdown
+# on the LED nodes (the kernel blanks every non-retained LED in gpio_led_shutdown otherwise).
+case "$1" in
+  poweroff|halt)
+    echo 0 > /sys/class/leds/power/brightness   2>/dev/null   # blue off
+    echo 1 > /sys/class/leds/standby/brightness 2>/dev/null   # red on
+    ;;
+esac

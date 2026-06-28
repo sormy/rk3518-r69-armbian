@@ -359,6 +359,18 @@ since the image ships kernel headers. **Not opt-in**: the remote — and the pow
 to wake from `poweroff` — must work out of the box; the setup script is also runnable by hand. DKMS
 package: `rockchip-pwm-remotectl-r69/1.0`; the built module is `rockchip_pwm_remotectl_r69`.
 
+**Surviving combined image+headers kernel upgrades.** When a kernel `apt upgrade` bumps both
+`linux-image` and `linux-headers`, dpkg configures the *image* first — firing its `dkms` postinst
+hook before the *headers* postinst has compiled the kernel's host build tools (`scripts/basic/fixdep`,
+`scripts/mod/modpost`). The headers *source* is already unpacked but the *tools* aren't built yet, so
+every out-of-tree `make` dies with `scripts/basic/fixdep: not found` (exit 127), failing all DKMS
+modules and leaving the kernel package half-configured. The fix is a tiny postinst.d hook,
+`firmware/r69-kernel-prepare`, staged to `/etc/kernel/postinst.d/00-r69-kernel-prepare` — the `00-`
+prefix makes `run-parts` execute it **before** `dkms`. It replicates the headers postinst's own steps
+(`make ARCH=arm64 olddefconfig scripts` + `M=scripts/mod` — *not* `modules_prepare`, which pulls in
+`archprepare` and fails on Armbian's stripped headers) to compile those tools first, so DKMS builds on
+the first pass. No-op once the tools exist.
+
 ### The power key — a configurable button: power-off *or* real suspend-to-RAM
 
 `KEY_POWER` → logind. We set **`remote_support_psci = <1>`** on `pwm3` so ATF arms the IR as a wake
@@ -565,6 +577,7 @@ R69 (or a similar RK3518 box) running well.
 | Wi-Fi `Exec format error` / duplicate symbol | `*-usb-dkms` clashes with in-tree SDIO driver | `apt remove` the USB DKMS + `depmod -a` |
 | Wi-Fi enumerates, reads IDs, firmware TX `-110` | a GPIO (LED) steals an **SDIO data line** | remove/repoint the offending `gpio-leds` |
 | `*.bin file failed to open` | driver wants un-suffixed firmware names | symlink un-suffixed → `*_<chip>_uXX.bin` |
+| DKMS modules fail on a kernel `apt upgrade` (`scripts/basic/fixdep: not found`, apt left half-broken) | dpkg configures **linux-image before linux-headers**, so the dkms hook runs before the headers postinst compiles the kernel host tools (`fixdep`/`modpost`) | `00-r69-kernel-prepare` postinst.d hook (sorts before `dkms`) pre-builds them; one-time recovery on an already-broken box: `dkms autoinstall -k $(uname -r)` then `dpkg --configure -a` |
 
 ---
 

@@ -1,0 +1,28 @@
+#!/bin/sh
+# Kernel postinst.d hook -- installed as 00-r69-kernel-prepare so it sorts BEFORE the dkms hook.
+#
+# Compile the kernel-headers host tools (scripts/basic/fixdep, scripts/mod/modpost) BEFORE the
+# dkms hook runs. On a combined linux-image + linux-headers apt upgrade dpkg configures
+# linux-image first; its postinst fires /etc/kernel/postinst.d/dkms while the linux-headers
+# postinst -- which compiles those tools -- has not run yet. The headers SOURCE is already
+# unpacked, so an out-of-tree "make M=... modules" finds the tree but not the tools and dies with
+# "scripts/basic/fixdep: not found" (exit 127), failing every DKMS module and leaving the kernel
+# package half-configured. Pre-building the tools here lets DKMS succeed on the first pass.
+#
+# Replicates the linux-headers postinst steps (NOT modules_prepare -- that pulls in archprepare,
+# which fails on Armbian stripped headers). No-op once the tools exist, so it is harmless when the
+# headers happen to be configured first. Never fails the kernel postinst (best effort).
+version="$1"
+src="/usr/src/linux-headers-$version"
+[ -n "$version" ] && [ -f "$src/Makefile" ] && [ -f "$src/.config" ] || exit 0
+[ -x "$src/scripts/basic/fixdep" ] && [ -x "$src/scripts/mod/modpost" ] && exit 0
+echo "r69: pre-building kernel-headers tools for $version so DKMS can build"
+ncpu=$(nproc 2>/dev/null || echo 1)
+log=/var/log/r69-kernel-prepare.log
+{
+  echo "=== r69-kernel-prepare $version ==="
+  make -C "$src" ARCH=arm64 olddefconfig
+  make -C "$src" ARCH=arm64 -j"$ncpu" scripts
+  make -C "$src" ARCH=arm64 -j"$ncpu" M=scripts/mod
+} >>"$log" 2>&1 || true
+exit 0

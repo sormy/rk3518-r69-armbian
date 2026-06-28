@@ -40,6 +40,7 @@ IR_RAW_BASE="https://raw.githubusercontent.com/armbian/linux-rockchip/$IR_SHA/dr
 for f in "$BASE" "$IDBLOADER" "$UBOOT" "$DTB" "$FW/r69-bt" "$FW/r69-bt.service" "$FW/rockchip-pwm-remotectl-r69-setup" \
          "$FW/ir/r69.patch" "$FW/ir/Makefile" "$FW/ir/dkms.conf" \
          "$FW/r69-firstboot" "$FW/r69-firstboot.service" "$FW/r69-mac-pin" "$FW/r69-mac-pin.service" "$FW/r69-dtb-persist" \
+         "$FW/r69-kernel-prepare" \
          "$FW/r69-led-shutdown" "$FW/r69-led-sleep" "$FW/r69-suspend.conf" "$FW/r69-powerkey.conf" \
          "$FW/r69-motd-bluetooth"; do
   [ -f "$f" ] || { echo "Missing: $f"; exit 1; }
@@ -205,6 +206,13 @@ $E2 e2mkdir "$FS:/usr/local/share/r69" 2>/dev/null || true
 $E2 e2cp "$DTB" "$FS:/usr/local/share/r69/board.dtb"
 $E2 e2mkdir "$FS:/etc/kernel/postinst.d" 2>/dev/null || true
 $E2 e2cp -P 0755 "$FW/r69-dtb-persist" "$FS:/etc/kernel/postinst.d/r69-dtb-persist"
+
+# ---- let DKMS modules build on combined image+headers kernel upgrades ----------------
+# dpkg configures linux-image before linux-headers, so the dkms hook fires before the headers
+# postinst has compiled the kernel host tools (fixdep/modpost) -- every DKMS build then dies with
+# "scripts/basic/fixdep: not found" and apt half-breaks. The 00- prefix runs this before dkms; it
+# builds those tools from the already-unpacked headers source so DKMS succeeds on the first pass.
+$E2 e2cp -P 0755 "$FW/r69-kernel-prepare" "$FS:/etc/kernel/postinst.d/00-r69-kernel-prepare"
 rm -rf "$TMP"
 
 detach; ATTACHED=""; sync

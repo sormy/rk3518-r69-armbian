@@ -128,6 +128,35 @@ rockchip-pwm-remotectl-r69-setup   # DKMS rebuild + load; survives kernel update
 evtest /dev/input/event4           # press remote keys (apt install evtest)
 ```
 
+The remote shows up as input device **`ffa90030.pwm`** (default `/dev/input/event4`; the number can
+shift — confirm with `evtest`). All 22 buttons emit standard Linux key events, with scancodes from
+`rockchip,usercode = <0xfb05>` in `firmware/board.dts`:
+
+| Button                      | Key event        |
+| --------------------------- | ---------------- |
+| Power                       | `KEY_POWER`      |
+| OK (center)                 | `KEY_ENTER`      |
+| Up                          | `KEY_UP`         |
+| Down                        | `KEY_DOWN`       |
+| Left                        | `KEY_LEFT`       |
+| Right                       | `KEY_RIGHT`      |
+| Back                        | `KEY_BACK`       |
+| Home                        | `KEY_HOME`       |
+| Delete                      | `KEY_BACKSPACE`  |
+| Hamburger (menu)            | `KEY_MENU`       |
+| Cog (settings)              | `KEY_SETUP`      |
+| Voice                       | `KEY_HELP`       |
+| Mouse                       | `KEY_TEXT`       |
+| Volume up                   | `KEY_VOLUMEUP`   |
+| Volume down                 | `KEY_VOLUMEDOWN` |
+| Mute                        | `KEY_MUTE`       |
+| Page up                     | `KEY_PAGEUP`     |
+| Page down                   | `KEY_PAGEDOWN`   |
+| YouTube (top-left)          | `KEY_F6`         |
+| Netflix (top-right)         | `KEY_F7`         |
+| Prime Video (bottom-left)   | `KEY_F3`         |
+| Google Play (bottom-right)  | `KEY_F8`         |
+
 **Toothpick button** — the recessed button behind the AV jack (press with a toothpick) is an
 `adc-keys` input: Linux sees it as a keypress (`KEY_VOLUMEUP`) on `/dev/input/event3` — a free
 button to remap. Test:

@@ -83,7 +83,12 @@ if [ "$OS" = Darwin ]; then
 else
   ATTACHED="$(sudo losetup -fP --show "$OUT")"
   FS="$(lsblk -lnpo NAME "$ATTACHED" | tail -1)"
-  E2='sudo'                 # loop device is root-owned on Linux
+  # Hand the rootfs partition node to the invoking user (rw) so every e2tools call runs WITHOUT
+  # sudo -- exactly like the macOS path above. Running e2cp as root while its /tmp scratch files
+  # are owned by the user makes e2cp's copy-OUT (open(outfile,...)) fail with "Permission denied"
+  # on some hosts (root/uid mismatch on the temp file). Keeping e2tools unprivileged sidesteps it.
+  sudo chown "$(id -un)" "$FS"
+  E2=''                     # we own the partition node now; no sudo needed
 fi
 echo "      rootfs partition: $FS"
 

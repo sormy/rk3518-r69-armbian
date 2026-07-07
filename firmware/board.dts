@@ -2307,11 +2307,6 @@
 		pinctrl-0 = <0x7d 0x7e 0x7f 0x80>;
 		rockchip,default-sample-phase = <0x5a>;
 		supports-sd;
-		sd-uhs-sdr12;
-		sd-uhs-sdr25;
-		sd-uhs-sdr50;
-		sd-uhs-sdr104;
-		vqmmc-supply = <0x81>;
 		vmmc-supply = <0x82>;
 		phandle = <0x109>;
 	};

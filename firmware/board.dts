@@ -2219,14 +2219,13 @@
 		clock-names = "core", "bus", "axi", "block", "timer";
 		resets = <0x02 0x19f 0x02 0x1a0 0x02 0x1a1 0x02 0x1a2 0x02 0x1a3>;
 		reset-names = "core", "bus", "axi", "block", "timer";
-		max-frequency = <0xbebc200>;
+		max-frequency = <0x5f5e100>;
 		status = "okay";
 		bus-width = <0x08>;
 		no-sd;
 		no-sdio;
 		non-removable;
-		mmc-hs400-1_8v;
-		mmc-hs400-enhanced-strobe;
+		mmc-hs200-1_8v;
 		phandle = <0x105>;
 	};
 

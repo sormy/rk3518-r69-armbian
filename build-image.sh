@@ -8,6 +8,8 @@
 #   - the R69 device tree                (vendor rock-2f DTB, edited: wifi + gmac + usb3, pcie off)
 #   - an AIC8800 Wi-Fi first-boot fixup  (the apt-remove + firmware-symlink dance that can
 #                                         only run on the live system, not at image-build time)
+#   - IR-remote + RK630 Ethernet-PHY DKMS sources (vendor drivers the stock kernel lacks,
+#                                         fetched at build time from a pinned commit; built on first boot)
 #
 # Everything it injects lives in firmware/. No kernel build, no Docker — native macOS via
 # e2tools, or native Linux via a loop device.
@@ -33,12 +35,15 @@ IDBLOADER_SEEK=64
 UBOOT_SEEK=16384
 # serial console on ff9f0000/ttyS0, not Armbian's stock ttyS2 (= the BT UART)
 SERIALCON="earlycon=uart8250,mmio32,0xff9f0000 console=ttyS0,1500000"
-# IR driver: pinned upstream commit; build-image fetches it and applies firmware/ir/r69.patch
-IR_SHA=31cd4f11b5ec31fc361256a04237416f278b62b2
-IR_RAW_BASE="https://raw.githubusercontent.com/armbian/linux-rockchip/$IR_SHA/drivers/input/remotectl"
+# vendored driver sources (IR remote + RK630 Ethernet PHY): pinned vendor-kernel commit;
+# build-image fetches from it (the IR source additionally gets firmware/ir/r69.patch)
+RK_SHA=31cd4f11b5ec31fc361256a04237416f278b62b2
+RK_RAW_BASE="https://raw.githubusercontent.com/armbian/linux-rockchip/$RK_SHA"
+IR_RAW_BASE="$RK_RAW_BASE/drivers/input/remotectl"
 
 for f in "$BASE" "$IDBLOADER" "$UBOOT" "$DTB" "$FW/r69-bt" "$FW/r69-bt.service" "$FW/rockchip-pwm-remotectl-r69-setup" \
          "$FW/ir/r69.patch" "$FW/ir/Makefile" "$FW/ir/dkms.conf" \
+         "$FW/rk630-phy-r69-setup" "$FW/ethphy/Makefile" "$FW/ethphy/dkms.conf" \
          "$FW/r69-firstboot" "$FW/r69-firstboot.service" "$FW/r69-mac-pin" "$FW/r69-mac-pin.service" "$FW/r69-dtb-persist" \
          "$FW/r69-kernel-prepare" \
          "$FW/r69-led-shutdown" "$FW/r69-led-sleep" "$FW/r69-suspend.conf" "$FW/r69-powerkey.conf" \
@@ -108,7 +113,7 @@ $E2 e2cp "$ENV.new" "$FS:/boot/armbianEnv.txt"
 rm -f "$ENV" "$ENV.new"
 
 # ---- 5. first-boot setup + per-unit MAC + Bluetooth services -------------------------
-echo "[5/5] Installing first-boot setup (Wi-Fi/u-boot/IR) + per-unit MAC + Bluetooth"
+echo "[5/5] Installing first-boot setup (Wi-Fi/u-boot/IR/eth-PHY) + per-unit MAC + Bluetooth"
 TMP="$(mktemp -d)"
 
 # static drop-in. NOTE: we do NOT bake /etc/modules-load.d/aic8800.conf — loading aic8800_fdrv early
@@ -117,7 +122,7 @@ TMP="$(mktemp -d)"
 printf 'blacklist aic8800_fdrv_usb\n' > "$TMP/blacklist-aic8800-usb.conf"
 
 # the single idempotent first-boot script + its service are vendored files (firmware/r69-firstboot
-# [.service]) — Wi-Fi fixup, u-boot hold, IR DKMS build; staged below.
+# [.service]) — Wi-Fi fixup, u-boot hold, IR + Ethernet-PHY DKMS builds; staged below.
 
 # enable the oneshots without a wants/ symlink (e2tools can't create symlinks): a
 # multi-user.target drop-in that Wants= them pulls the units at boot, same as enabling.
@@ -150,6 +155,20 @@ $E2 e2cp "$IRTMP/rockchip_pwm_remotectl.h" "$FS:/usr/src/rockchip-pwm-remotectl-
 $E2 e2cp "$FW/ir/Makefile"  "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/Makefile"
 $E2 e2cp "$FW/ir/dkms.conf" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/dkms.conf"
 rm -rf "$IRTMP"
+
+# ---- Ethernet PHY: DKMS source fetched here from the same PINNED vendor kernel, unmodified ------
+# The RK3528's integrated RK630 FEPHY (ID 0x00441400) needs this vendor driver to apply its per-die
+# OTP TX calibration; the stock kernel ships CONFIG_RK630_PHY off, so the uncalibrated Generic PHY
+# binds instead and many units negotiate only 10 Mb/s. r69-firstboot builds + activates it offline
+# on first boot (and it steps aside if a future kernel enables the driver in-tree).
+$E2 e2cp -P 0755 "$FW/rk630-phy-r69-setup" "$FS:/usr/local/sbin/rk630-phy-r69-setup"
+PHYTMP="$(mktemp -d)"
+curl -fsSL "$RK_RAW_BASE/drivers/net/phy/rk630phy.c" -o "$PHYTMP/rk630phy.c"
+$E2 e2mkdir "$FS:/usr/src/rk630-phy-r69-1.0" 2>/dev/null || true
+$E2 e2cp "$PHYTMP/rk630phy.c"   "$FS:/usr/src/rk630-phy-r69-1.0/rk630phy.c"
+$E2 e2cp "$FW/ethphy/Makefile"  "$FS:/usr/src/rk630-phy-r69-1.0/Makefile"
+$E2 e2cp "$FW/ethphy/dkms.conf" "$FS:/usr/src/rk630-phy-r69-1.0/dkms.conf"
+rm -rf "$PHYTMP"
 
 # ---- standby-LED hooks: light red 'standby' (blank blue) when off/suspended, like stock ----
 # The DTB carries retain-state-shutdown + retain-state-suspended so the kernel/LED-core stop

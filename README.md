@@ -27,7 +27,7 @@ This image is built and verified against **one specific box**. Check yours match
 | ------------- | ---------------------------------------------------------------------------------------------- |
 | Name          | **"R69"** (stock `ro.product.name=R69-1`), Android 12                                          |
 | SoC           | **RK3518A** — `SoC: 35181001`, reports `rk3528` (RK3518 is a variant inside the RK3528 family) |
-| RAM / storage | 2 GB DRAM (**~1.5 GB real**) · 16 GB **Samsung eMMC 5.x** (fast — see below) · micro-SD        |
+| RAM / storage | 2 GB DRAM (**~1.5 GB real**) · 16 GB **Samsung eMMC 5.x** (HS200 — see below) · micro-SD        |
 | Wi-Fi / BT    | **AIC8800D80** (SDIO Wi-Fi + UART Bluetooth)                                                   |
 | Ports         | HDMI · USB 2.0 · USB 3.0 · 10/100 Ethernet · micro-SD · AV jack                                |
 | Remote        | bundled 22-button IR remote                                                                    |
@@ -165,9 +165,18 @@ button to remap. Test:
 evtest /dev/input/event3           # press with a toothpick (apt install evtest)
 ```
 
-**Run from eMMC** (optional, but worth it) — the Samsung eMMC reads **~290 MB/s** and will likely
-beat any microSD you put in the slot (ours topped out at ~70 MB/s), winning by even more on random
-I/O. Migrating wipes the eMMC's factory Android, and **you can't re-dump it later** (no root from
+**Ethernet PHY** — the integrated RK630 PHY needs its vendor driver for OTP calibration (without it
+some units drop to 10 Mb/s); it's built + loaded automatically on first boot, like the IR driver, so
+Ethernet links at 100 Mb/s out of the box. To rebuild by hand or check which driver holds the PHY:
+
+```sh
+rk630-phy-r69-setup                          # DKMS rebuild + load; survives kernel updates
+readlink /sys/class/net/end0/phydev/driver   # want "RK630 PHY", not "Generic PHY"
+```
+
+**Run from eMMC** (optional, but worth it) — the Samsung eMMC (capped at **HS200 / 100 MHz** for
+write reliability — see below) still beats any microSD in the slot, especially on random I/O.
+Migrating wipes the eMMC's factory Android, and **you can't re-dump it later** (no root from
 the Android menus; USB-OTG maskrom untested here), so **back it up first — that dump is your only
 way back to stock**. Use an SD **at least 2× the eMMC** (≥ 32 GB) so the ~16 GB backup fits
 alongside the system. Booted from the SD:
@@ -191,6 +200,12 @@ e2cp /dev/diskNs1:/root/emmc-stock.img emmc-stock.img    # macOS diskNs1 · Linu
 
 > **Not yet run end-to-end on this box — verify each step.** `mmcblk1` = eMMC, `mmcblk0` = your SD
 > (confirm with `lsblk`; swapping them overwrites your SD).
+
+> **Why HS200, not HS400?** The eMMC used to run HS400ES / 200 MHz (the ROCK 2F default, good for
+> ~290 MB/s reads), but HS400ES **writes** corrupt on this board — reads are strobe-timed and fine,
+> writes aren't. It's now capped at HS200 / 100 MHz to match the factory, trading peak read
+> throughput for write integrity on your root device. Details in
+> **[HOW-IT-WAS-DONE.md](HOW-IT-WAS-DONE.md)**.
 
 <a id="back-to-stock"></a>**Back to stock / recovery**
 

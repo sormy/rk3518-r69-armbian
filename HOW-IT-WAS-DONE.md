@@ -443,6 +443,75 @@ The only un-lit window is that middle cold-boot gap; filling it would mean drivi
 
 ---
 
+## Storage — the ROCK 2F DTB over-drives the SD and eMMC
+
+Two bus-mode traps surfaced once the image ran on more units (other SD cards, a different eMMC
+part). Same root cause both times: the ROCK 2F device tree specs faster signaling than the R69
+board can hold, and the fix is to **match your own factory Android DTB** (`stock/board.dts`, pulled
+off the box) rather than trust the ROCK 2F defaults.
+
+### SD card: no 1.8 V switch → drop UHS
+
+The `sdmmc` node inherited `sd-uhs-sdr12/25/50/104` + a GPIO-switched `vqmmc-supply` from the ROCK
+2F. The R69's SD IO rail has **no 1.8 V switch** (`vcc_sd` is a fixed always-on 3.3 V regulator),
+and the factory DTB declares neither property. With a UHS-capable card the kernel negotiated a UHS
+mode and toggled a GPIO that switches nothing: the card entered 1.8 V signaling while the host pads
+stayed at 3.3 V, and since the regulator can't power-cycle the card back, every retry ended in
+`Card stuck being busy!` at 187.5 kHz — the rootfs never mounted and first boot never ran. It
+failed **only on UHS-capable cards**, which is why the same image booted or hung depending on the
+SD. Fix: strip `sd-uhs-*` + `vqmmc-supply`, matching the factory (3.3 V high-speed, 50 MHz). The
+Wi-Fi `sdio` node keeps *its* `sd-uhs-sdr104` — different controller, legitimate.
+
+### eMMC: HS400ES writes corrupt → cap at HS200/100 MHz
+
+The `sdhci` node inherited `mmc-hs400-1_8v` + `mmc-hs400-enhanced-strobe` and `max-frequency` =
+200 MHz from the ROCK 2F. The R69's eMMC *accepts* HS400ES and **reads** are clean — but sustained
+**writes** fail with I/O errors, breaking `armbian-install` and any eMMC write workload. The
+asymmetry is the tell: in HS400 the reads are latched off the **data strobe the eMMC returns** (the
+device supplies the timing, so they're robust — a read benchmark shows a happy ~290 MB/s), but the
+writes are latched off the **host's own 200 MHz DDR launch clock**, which the board's eMMC signal
+integrity can't hold. Your factory Android independently caps this part at **HS200 / 100 MHz** — so
+match it: `mmc-hs200-1_8v` and `max-frequency` = 100 MHz. (The factory tree also carries a bogus
+`mmc-hs200-enhanced-strobe` — enhanced strobe is HS400-only and no kernel parses that name — so it
+is *not* copied.)
+
+> **It's one link mode — you can't keep the fast reads.** HS400ES reads and writes are the same
+> negotiated mode; the read robustness comes from the returned strobe, not a mode you can select per
+> direction. Making writes reliable means dropping the whole link to HS200, which takes the read
+> speed with it (**~290 MB/s HS400ES → ~100 MB/s HS200/100 MHz**). Still faster than the SD, and the
+> eMMC is the root device after `armbian-install`, so write integrity wins.
+
+---
+
+## Ethernet — the integrated PHY needs its calibration driver
+
+Ethernet is 100 Mb/s by design (no gigabit PHY on the board — the MAC drives an **integrated
+RK630-class FEPHY** over RMII, `phy-mode = "rmii"`, MDIO address 2, PHY ID `0x00441400`). But the
+FEPHY needs its **per-die OTP calibration** (TX level + bandgap) applied by the vendor `rk630phy`
+driver; the DT already wires the `"bgs"` nvmem cell it reads. The stock Armbian kernel ships
+`CONFIG_RK630_PHY` **off**, so the uncalibrated **Generic PHY** binds instead — and on units whose
+analog silicon doesn't train 100BASE-TX uncalibrated, autonegotiation degrades to **10 Mb/s** (with
+a garbled link-partner readout to match).
+
+Shipped exactly like the IR driver — an out-of-tree DKMS module from pinned upstream source, no
+kernel rebuild:
+
+- **Source** — `drivers/net/phy/rk630phy.c`, **unmodified**, from the same pinned
+  `armbian/linux-rockchip` commit (`31cd4f11…`) as the IR driver. `build-image.sh` fetches it and
+  stages it as DKMS source at `/usr/src/rk630-phy-r69-1.0/`; `firmware/ethphy/` holds only the
+  `Makefile` + `dkms.conf` (not a copy of the driver).
+- **First boot** — `r69-firstboot` runs **`rk630-phy-r69-setup`** once (`dkms add/build/install`,
+  offline — the image ships headers), enables early autoload (`modules-load.d`, ahead of
+  networking), and does a **live Generic-PHY → RK630-PHY handover**: on `ifdown` the kernel releases
+  the generic driver, so a bare `bind` + `ifup` completes the switch with no reboot. It steps aside
+  if a future kernel ships `rk630phy` built-in or in-tree.
+
+Result: `end0` links at **100 Mb/s full duplex** with the calibrated driver holding the PHY (check:
+`readlink /sys/class/net/end0/phydev/driver` → `RK630 PHY`). DKMS rebuilds it on kernel updates.
+DKMS package `rk630-phy-r69/1.0`; module `rk630phy`.
+
+---
+
 ## RAM: 1.5 GB is the ceiling, not 2 GB
 
 The box carries 2 GB of DRAM physically — the TPL trains two 1 GB chip-selects (`CS=2`, each
@@ -549,7 +618,9 @@ R69 (or a similar RK3518 box) running well.
 
 **USB / Ethernet**
 - USB 3.0: `dwc3` → `dr_mode = "host"`, add the usb3 combo-phy, drop `maximum-speed = "high-speed"`.
-- Ethernet is **100 Mb/s by design** (integrated FEPHY / RMII, no gigabit PHY on the board) — not a bug.
+- Ethernet is **100 Mb/s by design** (integrated RK630 FEPHY / RMII, no gigabit PHY) — and needs the
+  **`rk630phy` DKMS driver** (auto-built first boot) for its OTP calibration, or the uncalibrated
+  Generic PHY drops some units to 10 Mb/s.
 - The Ethernet MAC looks random but is **stable per box** (systemd `MACAddressPolicy=persistent`);
   don't hardcode one in the DTB — systemd overrides it anyway.
 
@@ -557,11 +628,20 @@ R69 (or a similar RK3518 box) running well.
 - `poweroff` **doesn't cut power** — it's a *virtual deep-sleep* (`rockchip,virtual-poweroff`),
   so the box stays parked-but-powered. **Unplug to fully power off.**
 
-**Host tooling (macOS)**
-- Pull binaries with `adb exec-out`, not over serial (1.5 Mbaud base64 drops bytes).
-- e2tools into the image's ext4: use the **buffered** block node (`/dev/diskNs1`), not the raw
-  `/dev/rdiskNs1`; `e2ln -s` is stubbed, so enable a unit via a `multi-user.target.d/*.conf`
-  `Wants=` drop-in, not a `wants/` symlink.
+**Storage — match the factory, not the ROCK 2F DTB**
+- **SD**: no 1.8 V switch on the rail — strip `sd-uhs-*` + `vqmmc-supply`, or UHS cards hang at boot
+  (`Card stuck being busy`). 3.3 V high-speed only.
+- **eMMC**: HS400ES **writes** corrupt (reads are strobe-timed and fine) — cap at `mmc-hs200-1_8v` /
+  100 MHz to match the factory. One link mode, so it costs read speed (~290 → ~100 MB/s).
+
+**Host tooling**
+- **macOS**: pull binaries with `adb exec-out`, not over serial (1.5 Mbaud base64 drops bytes);
+  e2tools into the image's ext4 via the **buffered** block node (`/dev/diskNs1`), not raw
+  `/dev/rdiskNs1`.
+- **Linux**: `chown` the loop rootfs partition to your user and run e2tools **without** `sudo` — as
+  root with a user-owned `/tmp` scratch, e2cp's copy-out hits `Permission denied` on some hosts.
+- `e2ln -s` is stubbed on both, so enable a unit via a `multi-user.target.d/*.conf` `Wants=`
+  drop-in, not a `wants/` symlink.
 
 ---
 
@@ -578,6 +658,9 @@ R69 (or a similar RK3518 box) running well.
 | Wi-Fi enumerates, reads IDs, firmware TX `-110` | a GPIO (LED) steals an **SDIO data line** | remove/repoint the offending `gpio-leds` |
 | `*.bin file failed to open` | driver wants un-suffixed firmware names | symlink un-suffixed → `*_<chip>_uXX.bin` |
 | DKMS modules fail on a kernel `apt upgrade` (`scripts/basic/fixdep: not found`, apt left half-broken) | dpkg configures **linux-image before linux-headers**, so the dkms hook runs before the headers postinst compiles the kernel host tools (`fixdep`/`modpost`) | `00-r69-kernel-prepare` postinst.d hook (sorts before `dkms`) pre-builds them; one-time recovery on an already-broken box: `dkms autoinstall -k $(uname -r)` then `dpkg --configure -a` |
+| SD card hangs at boot (`Card stuck being busy!`), rootfs never mounts — only with **some** cards | ROCK 2F `sd-uhs-*` + `vqmmc-supply`, but the R69 SD rail has no 1.8 V switch | strip `sd-uhs-*` + `vqmmc-supply` (match factory: 3.3 V high-speed) |
+| eMMC reads fine but **writes** fail with I/O errors (`armbian-install` breaks) | ROCK 2F runs HS400ES @ 200 MHz; writes are host-clock-timed and the board can't hold it | `mmc-hs200-1_8v` + `max-frequency` 100 MHz (match factory) |
+| Ethernet links at **10 Mb/s** with a garbled link partner | uncalibrated Generic PHY bound — `CONFIG_RK630_PHY` off, FEPHY OTP calibration not applied | build `rk630phy` as DKMS (auto on first boot) |
 
 ---
 

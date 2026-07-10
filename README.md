@@ -194,7 +194,7 @@ readlink /sys/class/net/end0/phydev/driver   # want "RK630 PHY", not "Generic PH
 ```
 
 **Run from eMMC** (optional, but worth it) — the Samsung eMMC (capped at **HS200 / 100 MHz** for
-write reliability — see below) still beats any microSD in the slot, especially on random I/O.
+write reliability) still beats any microSD in the slot, especially on random I/O.
 Migrating wipes the eMMC's factory Android, and **you can't re-dump it later** (no root from
 the Android menus; USB-OTG maskrom untested here), so **back it up first — that dump is your only
 way back to stock**. Use an SD **at least 2× the eMMC** (≥ 32 GB) so the ~16 GB backup fits
@@ -217,14 +217,9 @@ SD's rootfs with e2tools:
 e2cp /dev/diskNs1:/root/emmc-stock.img emmc-stock.img    # macOS diskNs1 · Linux sdX1 (the SD's rootfs)
 ```
 
-> **Not yet run end-to-end on this box — verify each step.** `mmcblk1` = eMMC, `mmcblk0` = your SD
-> (confirm with `lsblk`; swapping them overwrites your SD).
-
-> **Why HS200, not HS400?** The eMMC used to run HS400ES / 200 MHz (the ROCK 2F default, good for
-> ~290 MB/s reads), but HS400ES **writes** corrupt on this board — reads are strobe-timed and fine,
-> writes aren't. It's now capped at HS200 / 100 MHz to match the factory, trading peak read
-> throughput for write integrity on your root device. Details in
-> **[HOW-IT-WAS-DONE.md](HOW-IT-WAS-DONE.md)**.
+> **Double-check the device nodes before you `dd`:** `mmcblk1` = eMMC, `mmcblk0` = your SD (confirm
+> with `lsblk` — swapping them overwrites your SD). `armbian-install` to eMMC has since been run for
+> real (it's what surfaced the HS200 fix), but the loader-restore steps still want a careful eye.
 
 <a id="back-to-stock"></a>**Back to stock / recovery**
 

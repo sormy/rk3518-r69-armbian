@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# r69-deploy — push this repo to a running R69 over SSH and apply it in place (no reflash). A thin
+# transport around r69-update: tar the repo to the box (excluding git + images), then run r69-update
+# there. All the apply logic lives in r69-update, so host and box stay in sync.
+#   usage: ./r69-deploy [user@]host [--reboot | --no-reboot]
+# Needs SSH to a root (or passwordless-sudo) account on the box; default is NOT to auto-reboot.
+set -euo pipefail
+
+HOST="${1:?usage: r69-deploy [user@]host [--reboot|--no-reboot]}"; shift || true
+REBOOT_ARG="--no-reboot"
+for a in "$@"; do
+  case "$a" in
+    --reboot)    REBOOT_ARG="--reboot" ;;
+    --no-reboot) REBOOT_ARG="--no-reboot" ;;
+    *) echo "unknown arg: $a"; exit 1 ;;
+  esac
+done
+
+REPO="$(cd "$(dirname "$0")" && pwd)"
+DEST=/usr/local/share/r69/repo
+
+echo "→ syncing repo to $HOST:$DEST"
+tar czf - -C "$REPO" \
+  --exclude=.git --exclude=images --exclude='*.img' --exclude='*.img.xz' . \
+  | ssh "$HOST" "sudo mkdir -p '$DEST' && sudo tar xzf - -C '$DEST'"
+
+echo "→ applying on $HOST  (r69-update $REBOOT_ARG)"
+ssh -t "$HOST" "sudo '$DEST/r69-update' $REBOOT_ARG"

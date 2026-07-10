@@ -89,6 +89,25 @@ sudo dd  if="Armbian_ABC.img" of=/dev/sdX    bs=4M conv=fsync status=progress; s
 ssh root@<box-ip>                                        # first login sets a password
 ```
 
+## Update a running box (no reflash)
+
+Already flashed, and just want the latest DTB / driver / script changes? Apply them in place instead
+of rebuilding and reflashing:
+
+```bash
+# from your dev machine, over SSH — pushes this repo to the box and applies it:
+./r69-deploy root@<box-ip>            # add --reboot to reboot automatically if the DTB changed
+
+# …or on the box itself, from a checkout or straight from GitHub:
+sudo ./r69-update                     # run from a repo checkout on the box
+sudo r69-update --pull                # or fetch the repo first (needs git)
+```
+
+It installs the firmware payload, refreshes + rebuilds the IR and Ethernet-PHY DKMS modules,
+reinstalls the device tree, and restarts the changed services — **rebooting only if `board.dtb`
+actually changed** (the bootloader is never touched). It reads the same `firmware/payload.list` the
+image build uses, so the two never drift.
+
 ## Customizing
 
 Everything below is optional — the defaults already work, so skip to whatever itch you've got.

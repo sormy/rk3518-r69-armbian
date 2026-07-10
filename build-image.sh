@@ -6,13 +6,15 @@
 #   - factory idbloader @ sector 64      (the only DDR config stable on this DRAM die)
 #   - our u-boot.itb @ sector 16384      (mainline + BL31 v1.21; build it with build-uboot.sh)
 #   - the R69 device tree                (vendor rock-2f DTB, edited: wifi + gmac + usb3, pcie off)
+#   - the firmware payload               (scripts/services/confs from firmware/payload.list)
 #   - an AIC8800 Wi-Fi first-boot fixup  (the apt-remove + firmware-symlink dance that can
 #                                         only run on the live system, not at image-build time)
 #   - IR-remote + RK630 Ethernet-PHY DKMS sources (vendor drivers the stock kernel lacks,
-#                                         fetched at build time from a pinned commit; built on first boot)
+#                                         fetched by firmware/fetch-dkms-src.sh; built on first boot)
 #
-# Everything it injects lives in firmware/. No kernel build, no Docker — native macOS via
-# e2tools, or native Linux via a loop device.
+# The same firmware/payload.list + fetch-dkms-src.sh drive r69-update, which applies these to a
+# RUNNING box without reflashing. Everything injected lives in firmware/. No kernel build, no Docker —
+# native macOS via e2tools, or native Linux via a loop device.
 #
 # Usage:  ./build-image.sh  Armbian_rk35xx.img[.xz]  [out.img]
 #   With no out.img, the output is "<base>-r69.img" written next to the base image.
@@ -35,26 +37,20 @@ IDBLOADER_SEEK=64
 UBOOT_SEEK=16384
 # serial console on ff9f0000/ttyS0, not Armbian's stock ttyS2 (= the BT UART)
 SERIALCON="earlycon=uart8250,mmio32,0xff9f0000 console=ttyS0,1500000"
-# vendored driver sources (IR remote + RK630 Ethernet PHY): pinned vendor-kernel commit;
-# build-image fetches from it (the IR source additionally gets firmware/ir/r69.patch)
-RK_SHA=31cd4f11b5ec31fc361256a04237416f278b62b2
-RK_RAW_BASE="https://raw.githubusercontent.com/armbian/linux-rockchip/$RK_SHA"
-IR_RAW_BASE="$RK_RAW_BASE/drivers/input/remotectl"
 
-for f in "$BASE" "$IDBLOADER" "$UBOOT" "$DTB" "$FW/r69-bt" "$FW/r69-bt.service" "$FW/rockchip-pwm-remotectl-r69-setup" \
-         "$FW/ir/r69.patch" "$FW/ir/Makefile" "$FW/ir/dkms.conf" \
-         "$FW/rk630-phy-r69-setup" "$FW/ethphy/Makefile" "$FW/ethphy/dkms.conf" \
-         "$FW/r69-firstboot" "$FW/r69-firstboot.service" "$FW/r69-mac-pin" "$FW/r69-mac-pin.service" "$FW/r69-dtb-persist" \
-         "$FW/r69-kernel-prepare" \
-         "$FW/r69-led-shutdown" "$FW/r69-led-sleep" "$FW/r69-suspend.conf" "$FW/r69-powerkey.conf" \
-         "$FW/r69-motd-bluetooth"; do
+# every static payload file (mode src dest) lives in firmware/payload.list; verify each source exists
+PAYLOAD_SRCS="$(sed -E 's/^[[:space:]]*#.*//; /^[[:space:]]*$/d' "$FW/payload.list" | awk '{print $2}')"
+for f in "$BASE" "$IDBLOADER" "$UBOOT" "$DTB" "$FW/payload.list" "$FW/fetch-dkms-src.sh" "$FW/ir/r69.patch"; do
   [ -f "$f" ] || { echo "Missing: $f"; exit 1; }
+done
+for s in $PAYLOAD_SRCS; do
+  [ -f "$FW/$s" ] || { echo "Missing payload source: firmware/$s"; exit 1; }
 done
 for t in e2cp e2ls e2ln e2mkdir; do
   command -v "$t" >/dev/null || { echo "Need e2tools ($t). macOS: brew install e2tools"; exit 1; }
 done
 for t in curl patch; do
-  command -v "$t" >/dev/null || { echo "Need $t (the image-time IR fetch+patch step)"; exit 1; }
+  command -v "$t" >/dev/null || { echo "Need $t (fetch-dkms-src.sh fetches + patches the DKMS sources)"; exit 1; }
 done
 
 # ---- 1. base image -> OUT ------------------------------------------------------------
@@ -112,87 +108,46 @@ printf 'fdtfile=%s\nconsole=display\nextraargs=%s\n' "$FDT" "$SERIALCON" >> "$EN
 $E2 e2cp "$ENV.new" "$FS:/boot/armbianEnv.txt"
 rm -f "$ENV" "$ENV.new"
 
-# ---- 5. first-boot setup + per-unit MAC + Bluetooth services -------------------------
-echo "[5/5] Installing first-boot setup (Wi-Fi/u-boot/IR/eth-PHY) + per-unit MAC + Bluetooth"
+# ---- 5. firmware payload + generated drop-ins + DKMS sources + rebrand ----------------
+echo "[5/5] Installing firmware payload + DKMS sources + rebrand"
 TMP="$(mktemp -d)"
 
-# static drop-in. NOTE: we do NOT bake /etc/modules-load.d/aic8800.conf — loading aic8800_fdrv early
-# fails while the conflicting aic8800-usb DKMS is still installed (duplicate symbol). r69-firstboot
-# removes that DKMS and THEN creates aic8800.conf, so the early-boot load never collides.
+# --- static payload: every file from firmware/payload.list, verbatim into the rootfs ---
+# (the same manifest r69-update reads to apply these to a running box)
+while read -r mode src dest; do
+  case "$mode" in ''|\#*) continue ;; esac
+  $E2 e2mkdir "$FS:$(dirname "$dest")" 2>/dev/null || true
+  $E2 e2cp -P "$mode" "$FW/$src" "$FS:$dest"
+done < "$FW/payload.list"
+
+# --- generated drop-ins (not verbatim files, so not in payload.list; image-build only) ---
+# blacklist the aic8800 USB driver. NOTE: we do NOT bake /etc/modules-load.d/aic8800.conf — loading
+# aic8800_fdrv early fails while the conflicting aic8800-usb DKMS is still installed (duplicate
+# symbol). r69-firstboot removes that DKMS and THEN creates aic8800.conf, so the early load never
+# collides.
 printf 'blacklist aic8800_fdrv_usb\n' > "$TMP/blacklist-aic8800-usb.conf"
-
-# the single idempotent first-boot script + its service are vendored files (firmware/r69-firstboot
-# [.service]) — Wi-Fi fixup, u-boot hold, IR + Ethernet-PHY DKMS builds; staged below.
-
-# enable the oneshots without a wants/ symlink (e2tools can't create symlinks): a
+$E2 e2cp "$TMP/blacklist-aic8800-usb.conf" "$FS:/etc/modprobe.d/blacklist-aic8800-usb.conf"
+# enable the payload's oneshots without a wants/ symlink (e2tools can't create symlinks): a
 # multi-user.target drop-in that Wants= them pulls the units at boot, same as enabling.
 printf '[Unit]\nWants=r69-firstboot.service r69-mac-pin.service r69-bt.service\n' > "$TMP/10-r69.conf"
-
-# per-unit MAC pin (stable vendor-OUI + cpuid MAC, every boot, so the DHCP lease stops churning)
-# is the vendored r69-mac-pin + r69-mac-pin.service, staged below.
-$E2 e2cp "$TMP/blacklist-aic8800-usb.conf" "$FS:/etc/modprobe.d/blacklist-aic8800-usb.conf"
-$E2 e2cp -P 0755 "$FW/r69-firstboot"         "$FS:/usr/local/sbin/r69-firstboot"
-$E2 e2cp         "$FW/r69-firstboot.service" "$FS:/etc/systemd/system/r69-firstboot.service"
 $E2 e2mkdir "$FS:/etc/systemd/system/multi-user.target.d" 2>/dev/null || true
 $E2 e2cp "$TMP/10-r69.conf" "$FS:/etc/systemd/system/multi-user.target.d/10-r69.conf"
-$E2 e2cp -P 0755 "$FW/r69-mac-pin" "$FS:/usr/local/sbin/r69-mac-pin"
-$E2 e2cp "$FW/r69-mac-pin.service"  "$FS:/etc/systemd/system/r69-mac-pin.service"
 
-# ---- IR remote: opt-in setup + DKMS source built here from PINNED upstream + our patch ----------
-# We don't vendor the driver wholesale; we author firmware/ir/r69.patch against a pinned upstream
-# commit ($IR_SHA). Here (build host, has network) we fetch that exact commit, apply the patch, and
-# stage the result as the image's DKMS source. r69-firstboot builds + loads it on first boot
-# (offline — the image ships kernel headers) so the bundled remote (and the power button, the only
-# way to wake from poweroff) works out of the box; the setup script is also runnable by hand.
-$E2 e2cp -P 0755 "$FW/rockchip-pwm-remotectl-r69-setup" "$FS:/usr/local/sbin/rockchip-pwm-remotectl-r69-setup"
-IRTMP="$(mktemp -d)"
-curl -fsSL "$IR_RAW_BASE/rockchip_pwm_remotectl.c" -o "$IRTMP/rockchip_pwm_remotectl.c"
-curl -fsSL "$IR_RAW_BASE/rockchip_pwm_remotectl.h" -o "$IRTMP/rockchip_pwm_remotectl.h"
-patch -p1 -d "$IRTMP" < "$FW/ir/r69.patch"
-$E2 e2mkdir "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0" 2>/dev/null || true
-$E2 e2cp "$IRTMP/rockchip_pwm_remotectl.c" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/rockchip_pwm_remotectl.c"
-$E2 e2cp "$IRTMP/rockchip_pwm_remotectl.h" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/rockchip_pwm_remotectl.h"
-$E2 e2cp "$FW/ir/Makefile"  "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/Makefile"
-$E2 e2cp "$FW/ir/dkms.conf" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/dkms.conf"
-rm -rf "$IRTMP"
+# --- DKMS driver SOURCES: fetched from the pinned vendor kernel by fetch-dkms-src.sh (build host has
+# network). The setup scripts + Makefile + dkms.conf already came from payload.list above; the .c/.h
+# go into the src dirs it created. r69-firstboot builds them on first boot (offline — image ships
+# headers) so the remote/power-button and 100 Mb/s Ethernet work out of the box. ---
+DKMSTMP="$(mktemp -d)"
+"$FW/fetch-dkms-src.sh" "$DKMSTMP/ir" "$DKMSTMP/phy"
+$E2 e2cp "$DKMSTMP/ir/rockchip_pwm_remotectl.c" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/rockchip_pwm_remotectl.c"
+$E2 e2cp "$DKMSTMP/ir/rockchip_pwm_remotectl.h" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/rockchip_pwm_remotectl.h"
+$E2 e2cp "$DKMSTMP/phy/rk630phy.c"              "$FS:/usr/src/rk630-phy-r69-1.0/rk630phy.c"
+rm -rf "$DKMSTMP"
 
-# ---- Ethernet PHY: DKMS source fetched here from the same PINNED vendor kernel, unmodified ------
-# The RK3528's integrated RK630 FEPHY (ID 0x00441400) needs this vendor driver to apply its per-die
-# OTP TX calibration; the stock kernel ships CONFIG_RK630_PHY off, so the uncalibrated Generic PHY
-# binds instead and many units negotiate only 10 Mb/s. r69-firstboot builds + activates it offline
-# on first boot (and it steps aside if a future kernel enables the driver in-tree).
-$E2 e2cp -P 0755 "$FW/rk630-phy-r69-setup" "$FS:/usr/local/sbin/rk630-phy-r69-setup"
-PHYTMP="$(mktemp -d)"
-curl -fsSL "$RK_RAW_BASE/drivers/net/phy/rk630phy.c" -o "$PHYTMP/rk630phy.c"
-$E2 e2mkdir "$FS:/usr/src/rk630-phy-r69-1.0" 2>/dev/null || true
-$E2 e2cp "$PHYTMP/rk630phy.c"   "$FS:/usr/src/rk630-phy-r69-1.0/rk630phy.c"
-$E2 e2cp "$FW/ethphy/Makefile"  "$FS:/usr/src/rk630-phy-r69-1.0/Makefile"
-$E2 e2cp "$FW/ethphy/dkms.conf" "$FS:/usr/src/rk630-phy-r69-1.0/dkms.conf"
-rm -rf "$PHYTMP"
-
-# ---- standby-LED hooks: light red 'standby' (blank blue) when off/suspended, like stock ----
-# The DTB carries retain-state-shutdown + retain-state-suspended so the kernel/LED-core stop
-# blanking the LEDs; these hooks set the actual red-on/blue-off state at poweroff and suspend.
-$E2 e2mkdir "$FS:/usr/lib/systemd/system-shutdown" 2>/dev/null || true
-$E2 e2mkdir "$FS:/usr/lib/systemd/system-sleep"    2>/dev/null || true
-$E2 e2cp -P 0755 "$FW/r69-led-shutdown" "$FS:/usr/lib/systemd/system-shutdown/r69-led"
-$E2 e2cp -P 0755 "$FW/r69-led-sleep"    "$FS:/usr/lib/systemd/system-sleep/r69-led"
-
-# ---- power-button behaviour: suspend-to-RAM is enabled + available; the power key defaults to
-# poweroff and is switched to suspend by editing r69-powerkey.conf (see README). zz- so they win.
-$E2 e2mkdir "$FS:/etc/systemd/sleep.conf.d"  2>/dev/null || true
-$E2 e2mkdir "$FS:/etc/systemd/logind.conf.d" 2>/dev/null || true
-$E2 e2cp "$FW/r69-suspend.conf"  "$FS:/etc/systemd/sleep.conf.d/zz-r69-suspend.conf"
-$E2 e2cp "$FW/r69-powerkey.conf" "$FS:/etc/systemd/logind.conf.d/zz-r69-powerkey.conf"
-
-# ---- AIC8800 Bluetooth: r69-bt attaches hci_uart on the BT UART; AutoEnable powers hci0 on
-# bluez ships in the base image
-$E2 e2cp -P 0755 "$FW/r69-bt" "$FS:/usr/local/sbin/r69-bt"
-$E2 e2cp "$FW/r69-bt.service" "$FS:/etc/systemd/system/r69-bt.service"
-# Set BlueZ AutoEnable=true if the base already has main.conf. e2cp on macOS returns 0 even when the
-# source is absent, so gate on a non-empty copy ([ -s ]). Minimal base images ship no bluez at all —
-# we never auto-install it; the user installs bluez and re-runs r69-firstboot, which then sets
-# AutoEnable + starts BT (the login MOTD prompts for this).
+# --- Bluetooth AutoEnable — edit main.conf only if the base already ships bluez. e2cp on macOS
+# returns 0 even when the source is absent, so gate on a non-empty copy ([ -s ]). Minimal base images
+# ship no bluez; we NEVER auto-install it — the user installs bluez and re-runs r69-firstboot (the
+# login MOTD prompts for this). ---
 BTMAIN="$(mktemp)"
 if $E2 e2cp "$FS:/etc/bluetooth/main.conf" "$BTMAIN" 2>/dev/null && [ -s "$BTMAIN" ]; then
   if grep -qiE '^[[:space:]]*#?[[:space:]]*AutoEnable=' "$BTMAIN"; then
@@ -203,9 +158,6 @@ if $E2 e2cp "$FS:/etc/bluetooth/main.conf" "$BTMAIN" 2>/dev/null && [ -s "$BTMAI
   $E2 e2cp "$BTMAIN.new" "$FS:/etc/bluetooth/main.conf"
 fi
 rm -f "$BTMAIN" "$BTMAIN.new"
-# login hint while bluez is missing (self-silences once installed)
-$E2 e2mkdir "$FS:/etc/update-motd.d" 2>/dev/null || true
-$E2 e2cp -P 0755 "$FW/r69-motd-bluetooth" "$FS:/etc/update-motd.d/99-r69-bluetooth"
 
 # ---- rebrand: the ROCK 2F base ships hostname "rock-2f" -> r69 ------------------------
 $E2 e2cp "$FS:/etc/hostname" "$TMP/oldhost" 2>/dev/null || true
@@ -221,22 +173,6 @@ if $E2 e2cp "$FS:/etc/armbian-release" "$TMP/arel" 2>/dev/null; then
   sed 's/^BOARD_NAME=.*/BOARD_NAME="R69"/' "$TMP/arel" > "$TMP/arel.new"
   $E2 e2cp "$TMP/arel.new" "$FS:/etc/armbian-release"
 fi
-
-# ---- persist our DTB across kernel updates -------------------------------------------
-# A kernel apt-upgrade drops a fresh dtb-<newver>/ holding the STOCK DTBs; without this our
-# board.dtb wouldn't be in the new kernel's dtb dir and the box would boot the wrong tree.
-# Stash a master copy + a kernel postinst.d hook that reinstalls it after each kernel update.
-$E2 e2mkdir "$FS:/usr/local/share/r69" 2>/dev/null || true
-$E2 e2cp "$DTB" "$FS:/usr/local/share/r69/board.dtb"
-$E2 e2mkdir "$FS:/etc/kernel/postinst.d" 2>/dev/null || true
-$E2 e2cp -P 0755 "$FW/r69-dtb-persist" "$FS:/etc/kernel/postinst.d/r69-dtb-persist"
-
-# ---- let DKMS modules build on combined image+headers kernel upgrades ----------------
-# dpkg configures linux-image before linux-headers, so the dkms hook fires before the headers
-# postinst has compiled the kernel host tools (fixdep/modpost) -- every DKMS build then dies with
-# "scripts/basic/fixdep: not found" and apt half-breaks. The 00- prefix runs this before dkms; it
-# builds those tools from the already-unpacked headers source so DKMS succeeds on the first pass.
-$E2 e2cp -P 0755 "$FW/r69-kernel-prepare" "$FS:/etc/kernel/postinst.d/00-r69-kernel-prepare"
 rm -rf "$TMP"
 
 detach; ATTACHED=""; sync

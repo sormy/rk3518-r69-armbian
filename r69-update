@@ -1,0 +1,74 @@
+#!/bin/sh
+# r69-update — apply the current repo's firmware to THIS running R69, no reflash. Idempotent.
+# Installs the payload (firmware/payload.list) into place, refreshes + rebuilds the DKMS drivers,
+# reinstalls the device tree, reloads systemd + restarts the changed services, and reboots ONLY if
+# the DTB actually changed. Run from a repo checkout on the box, or with --pull to fetch it first.
+#   usage: sudo r69-update [--pull] [--reboot | --no-reboot]
+#
+# Deliberately does NOT redo the one-time image-build steps (rebrand, the unit-enable drop-in, the
+# console/armbianEnv edit, the aic8800 blacklist) — those are already in place on a booted R69, and
+# the Wi-Fi/Bluetooth fixups live in r69-firstboot. The bootloader (idbloader/u-boot.itb) is never
+# touched here; changing it on a live boot device is a separate, riskier operation.
+set -e
+[ "$(id -u)" = 0 ] || { echo "run as root (sudo r69-update)"; exit 1; }
+
+PULL=0
+REBOOT=ask
+for a in "$@"; do
+  case "$a" in
+    --pull)       PULL=1 ;;
+    --reboot)     REBOOT=yes ;;
+    --no-reboot)  REBOOT=no ;;
+    *) echo "unknown arg: $a"; exit 1 ;;
+  esac
+done
+
+REPO_URL=https://github.com/sormy/rk3518-r69-armbian
+SELF="$(cd "$(dirname "$0")" && pwd)"
+if [ "$PULL" = 1 ]; then
+  REPO=/usr/local/share/r69/repo
+  if [ -d "$REPO/.git" ]; then git -C "$REPO" pull --ff-only; else git clone --depth 1 "$REPO_URL" "$REPO"; fi
+elif [ -f "$SELF/firmware/payload.list" ]; then
+  REPO="$SELF"
+else
+  echo "not in a repo checkout (no firmware/payload.list next to me); re-run with --pull"; exit 1
+fi
+FW="$REPO/firmware"
+[ -f "$FW/payload.list" ] || { echo "missing $FW/payload.list"; exit 1; }
+
+dtbsum() { [ -f /usr/local/share/r69/board.dtb ] && md5sum /usr/local/share/r69/board.dtb | cut -d' ' -f1 || echo none; }
+OLD_DTB="$(dtbsum)"
+
+echo "[1/5] installing firmware payload"
+while read -r mode src dest; do
+  case "$mode" in ''|\#*) continue ;; esac
+  install -D -m "$mode" "$FW/$src" "$dest"
+done < "$FW/payload.list"
+
+echo "[2/5] refreshing DKMS driver sources + rebuilding"
+"$FW/fetch-dkms-src.sh" /usr/src/rockchip-pwm-remotectl-r69-1.0 /usr/src/rk630-phy-r69-1.0
+# rebuild via the setup scripts: they dkms remove --all -> add/build/install, so a changed source or a
+# new kernel actually rebuilds (unlike r69-firstboot's build-only-if-absent guard).
+/usr/local/sbin/rockchip-pwm-remotectl-r69-setup || echo "  (IR driver setup reported an issue; continuing)"
+/usr/local/sbin/rk630-phy-r69-setup             || echo "  (PHY driver setup reported an issue; continuing)"
+
+echo "[3/5] installing the DTB into the running kernel"
+/etc/kernel/postinst.d/r69-dtb-persist "$(uname -r)"
+
+echo "[4/5] reloading systemd + restarting changed services"
+systemctl daemon-reload
+systemctl restart   r69-mac-pin.service 2>/dev/null || true
+systemctl try-restart r69-bt.service    2>/dev/null || true
+echo "  (power-key / suspend drop-ins take effect after 'systemctl restart systemd-logind' or a reboot)"
+
+echo "[5/5] done"
+if [ "$OLD_DTB" != "$(dtbsum)" ]; then
+  echo "device tree changed — a reboot is required to load it."
+  case "$REBOOT" in
+    yes) echo "rebooting now…"; reboot ;;
+    no)  echo "reboot skipped (--no-reboot); run 'reboot' when ready." ;;
+    ask) printf "reboot now? [y/N] "; read -r ans; case "$ans" in [yY]) reboot ;; *) echo "run 'reboot' when ready." ;; esac ;;
+  esac
+else
+  echo "device tree unchanged — no reboot needed. New drivers/services are live."
+fi

@@ -1,0 +1,38 @@
+# R69 firmware payload — the files copied verbatim into the rootfs. Single source of truth, shared by
+# build-image.sh (stages into the offline image via e2cp) and r69-update (installs into the live / ).
+# One line per file:  <mode> <src-under-firmware/> <dest-absolute>.  Blank lines and #comments ignored.
+# The DKMS driver *sources* (.c/.h) are NOT here — they're fetched by fetch-dkms-src.sh.
+
+# first-boot setup + per-boot MAC pin (services enabled via a multi-user.target drop-in, image-only)
+0755 r69-firstboot                    /usr/local/sbin/r69-firstboot
+0644 r69-firstboot.service            /etc/systemd/system/r69-firstboot.service
+0755 r69-mac-pin                      /usr/local/sbin/r69-mac-pin
+0644 r69-mac-pin.service              /etc/systemd/system/r69-mac-pin.service
+
+# IR-remote DKMS (setup script + build files; .c/.h fetched by fetch-dkms-src.sh)
+0755 rockchip-pwm-remotectl-r69-setup /usr/local/sbin/rockchip-pwm-remotectl-r69-setup
+0644 ir/Makefile                      /usr/src/rockchip-pwm-remotectl-r69-1.0/Makefile
+0644 ir/dkms.conf                     /usr/src/rockchip-pwm-remotectl-r69-1.0/dkms.conf
+
+# RK630 Ethernet-PHY DKMS
+0755 rk630-phy-r69-setup              /usr/local/sbin/rk630-phy-r69-setup
+0644 ethphy/Makefile                  /usr/src/rk630-phy-r69-1.0/Makefile
+0644 ethphy/dkms.conf                 /usr/src/rk630-phy-r69-1.0/dkms.conf
+
+# standby-LED hooks (red-on/blue-off at poweroff + suspend)
+0755 r69-led-shutdown                 /usr/lib/systemd/system-shutdown/r69-led
+0755 r69-led-sleep                    /usr/lib/systemd/system-sleep/r69-led
+
+# power-button behaviour (zz- prefix so these drop-ins win)
+0644 r69-suspend.conf                 /etc/systemd/sleep.conf.d/zz-r69-suspend.conf
+0644 r69-powerkey.conf                /etc/systemd/logind.conf.d/zz-r69-powerkey.conf
+
+# Bluetooth attach + login hint
+0755 r69-bt                           /usr/local/sbin/r69-bt
+0644 r69-bt.service                   /etc/systemd/system/r69-bt.service
+0755 r69-motd-bluetooth              /etc/update-motd.d/99-r69-bluetooth
+
+# DTB master copy + kernel postinst.d hooks (persist our DTB, prep headers so DKMS builds)
+0644 board.dtb                        /usr/local/share/r69/board.dtb
+0755 r69-dtb-persist                  /etc/kernel/postinst.d/r69-dtb-persist
+0755 r69-kernel-prepare               /etc/kernel/postinst.d/00-r69-kernel-prepare

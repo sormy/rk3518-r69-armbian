@@ -42,6 +42,13 @@ if ! dkms status 2>/dev/null | grep -q '^rockchip-pwm-remotectl-r69'; then
   rockchip-pwm-remotectl-r69-setup
 fi
 
+# --- Ethernet PHY driver (DKMS) — the integrated RK630 FEPHY needs its vendor driver to apply the
+# per-die OTP TX calibration; with the stock kernel's Generic PHY fallback many units negotiate
+# only 10 Mb/s. The setup script skips itself if the running kernel already ships rk630phy.
+if ! dkms status 2>/dev/null | grep -q '^rk630-phy-r69'; then
+  rk630-phy-r69-setup
+fi
+
 # --- Bluetooth — configured ONLY if bluez is already installed. We NEVER install it (first boot must
 # stay fully offline). To enable BT: install bluez yourself, then re-run this script. See README / the
 # login hint. If bluez is absent this is a clean no-op.

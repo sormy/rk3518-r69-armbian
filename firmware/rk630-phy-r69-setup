@@ -1,0 +1,62 @@
+#!/bin/sh
+# Build + install the RK630 Ethernet PHY driver as a DKMS module from the unmodified vendor source
+# the image stages at /usr/src/rk630-phy-r69-1.0/. Run automatically on first boot by r69-firstboot;
+# also runnable by hand to rebuild/troubleshoot. Fully offline -- it NEVER downloads; it errors out
+# if the build tools/headers aren't already present (the recommended base image ships them).
+#
+# The RK3528's Ethernet PHY is the SoC-integrated RK630-class FEPHY (ID 0x00441400). It needs its
+# per-die OTP calibration (TX level + bandgap) applied by this vendor driver; the stock Armbian
+# kernel ships with CONFIG_RK630_PHY off, so the uncalibrated Generic PHY binds instead and many
+# units only negotiate 10 Mb/s. If a future kernel enables the driver in-tree, this script detects
+# that and steps aside.
+set -e
+[ "$(id -u)" = 0 ] || { echo "run as root"; exit 1; }
+
+VER=1.0
+NAME=rk630-phy-r69
+SRC=/usr/src/$NAME-$VER
+KREL=$(uname -r)
+
+# a kernel that already ships rk630phy (builtin or in-tree module) needs no DKMS build
+if grep -q 'rk630phy' "/lib/modules/$KREL/modules.builtin" 2>/dev/null; then
+  echo "kernel has rk630phy built in -- nothing to do"; exit 0
+fi
+if find "/lib/modules/$KREL/kernel" -name 'rk630phy.ko*' 2>/dev/null | grep -q .; then
+  echo "kernel ships rk630phy in-tree -- enabling early autoload only"
+  echo rk630phy > /etc/modules-load.d/rk630phy.conf
+  modprobe rk630phy 2>/dev/null || true
+  exit 0
+fi
+
+[ -f "$SRC/dkms.conf" ] || { echo "vendored source missing at $SRC (build the image with build-image.sh)"; exit 1; }
+
+echo "[1/3] prerequisites (offline -- this script never downloads)"
+need=""
+[ -d "/usr/src/linux-headers-$KREL" ] || need="$need linux-headers-$KREL"
+for t in dkms gcc make; do command -v $t >/dev/null || need="$need $t"; done
+[ -n "$need" ] && { echo "missing build prerequisites:$need -- install them, then re-run"; exit 1; }
+
+echo "[2/3] dkms build + install"
+dkms remove  -m "$NAME" -v "$VER" --all 2>/dev/null || true
+dkms add     -m "$NAME" -v "$VER"
+dkms build   -m "$NAME" -v "$VER"
+dkms install -m "$NAME" -v "$VER"
+
+echo "[3/3] auto-load before networking + take over the PHY now"
+# systemd-modules-load runs long before the network comes up, so on every later boot the real
+# driver claims the PHY from the start.
+echo rk630phy > /etc/modules-load.d/rk630phy.conf
+modprobe rk630phy 2>/dev/null || true
+# live handover, no reboot needed: on ifdown the kernel auto-releases the Generic PHY driver
+# (it only does this for generic drivers), so a bare bind + ifup completes the switch.
+PHYDEV="$(basename "$(readlink -f /sys/class/net/end0/phydev 2>/dev/null)" 2>/dev/null || true)"
+DRV="$(basename "$(readlink -f /sys/class/net/end0/phydev/driver 2>/dev/null)" 2>/dev/null || true)"
+if [ -n "$PHYDEV" ] && [ "$DRV" != "RK630 PHY" ]; then
+  ip link set end0 down 2>/dev/null || true
+  echo "$PHYDEV" > '/sys/bus/mdio_bus/drivers/RK630 PHY/bind' 2>/dev/null || true
+  ip link set end0 up 2>/dev/null || true
+fi
+
+echo
+echo "Done. Ethernet negotiates 100 Mb/s full duplex once the RK630 driver holds the PHY"
+echo "(check: readlink /sys/class/net/end0/phydev/driver). DKMS rebuilds it on kernel updates."

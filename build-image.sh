@@ -80,7 +80,6 @@ if [ "$OS" = Darwin ]; then
   # buffered BLOCK node (not /dev/r…): libext2fs does unaligned I/O, which the raw char
   # node rejects. hdiutil hands the node to the attaching user (rw), so no sudo needed.
   FS="/dev/${PART}"
-  E2=''
 else
   ATTACHED="$(sudo losetup -fP --show "$OUT")"
   FS="$(lsblk -lnpo NAME "$ATTACHED" | tail -1)"
@@ -88,24 +87,23 @@ else
   # sudo -- exactly like the macOS path above. Running e2cp as root while its /tmp scratch files
   # are owned by the user makes e2cp's copy-OUT (open(outfile,...)) fail with "Permission denied"
   # on some hosts (root/uid mismatch on the temp file). Keeping e2tools unprivileged sidesteps it.
-  sudo chown "$(id -un)" "$FS"
-  E2=''                     # we own the partition node now; no sudo needed
+  sudo chown "$(id -un)" "$FS"   # own the node so e2tools run unprivileged (no sudo below)
 fi
 echo "      rootfs partition: $FS"
 
 # ---- 4. install the R69 device tree + console ----------------------------------------
 echo "[4/5] Installing R69 DTB + console"
-VERDIR="$($E2 e2ls "$FS:/boot" | tr -s ' \t' '\n' | grep '^dtb-' | head -1)"
+VERDIR="$(e2ls "$FS:/boot" | tr -s ' \t' '\n' | grep '^dtb-' | head -1)"
 [ -n "$VERDIR" ] || { echo "Could not find /boot/dtb-<ver> in the image"; exit 1; }
 FDT="rockchip/board.dtb"
-$E2 e2cp "$DTB" "$FS:/boot/$VERDIR/$FDT"
+e2cp "$DTB" "$FS:/boot/$VERDIR/$FDT"
 
 ENV="$(mktemp)"
-$E2 e2cp "$FS:/boot/armbianEnv.txt" "$ENV"
+e2cp "$FS:/boot/armbianEnv.txt" "$ENV"
 # console=display drops boot.cmd's stray console=ttyS2 (the BT UART); ours goes via extraargs
 grep -v -E '^fdtfile=|^extraargs=|^console=' "$ENV" > "$ENV.new" || true
 printf 'fdtfile=%s\nconsole=display\nextraargs=%s\n' "$FDT" "$SERIALCON" >> "$ENV.new"
-$E2 e2cp "$ENV.new" "$FS:/boot/armbianEnv.txt"
+e2cp "$ENV.new" "$FS:/boot/armbianEnv.txt"
 rm -f "$ENV" "$ENV.new"
 
 # ---- 5. firmware payload + generated drop-ins + DKMS sources + rebrand ----------------
@@ -116,8 +114,8 @@ TMP="$(mktemp -d)"
 # (the same manifest r69-update reads to apply these to a running box)
 while read -r mode src dest; do
   case "$mode" in ''|\#*) continue ;; esac
-  $E2 e2mkdir "$FS:$(dirname "$dest")" 2>/dev/null || true
-  $E2 e2cp -P "$mode" "$FW/$src" "$FS:$dest"
+  e2mkdir "$FS:$(dirname "$dest")" 2>/dev/null || true
+  e2cp -P "$mode" "$FW/$src" "$FS:$dest"
 done < "$FW/payload.list"
 
 # --- generated drop-ins (not verbatim files, so not in payload.list; image-build only) ---
@@ -126,12 +124,12 @@ done < "$FW/payload.list"
 # symbol). r69-firstboot removes that DKMS and THEN creates aic8800.conf, so the early load never
 # collides.
 printf 'blacklist aic8800_fdrv_usb\n' > "$TMP/blacklist-aic8800-usb.conf"
-$E2 e2cp "$TMP/blacklist-aic8800-usb.conf" "$FS:/etc/modprobe.d/blacklist-aic8800-usb.conf"
+e2cp "$TMP/blacklist-aic8800-usb.conf" "$FS:/etc/modprobe.d/blacklist-aic8800-usb.conf"
 # enable the payload's oneshots without a wants/ symlink (e2tools can't create symlinks): a
 # multi-user.target drop-in that Wants= them pulls the units at boot, same as enabling.
 printf '[Unit]\nWants=r69-firstboot.service r69-mac-pin.service r69-bt.service\n' > "$TMP/10-r69.conf"
-$E2 e2mkdir "$FS:/etc/systemd/system/multi-user.target.d" 2>/dev/null || true
-$E2 e2cp "$TMP/10-r69.conf" "$FS:/etc/systemd/system/multi-user.target.d/10-r69.conf"
+e2mkdir "$FS:/etc/systemd/system/multi-user.target.d" 2>/dev/null || true
+e2cp "$TMP/10-r69.conf" "$FS:/etc/systemd/system/multi-user.target.d/10-r69.conf"
 
 # --- DKMS driver SOURCES: fetched from the pinned vendor kernel by fetch-dkms-src.sh (build host has
 # network). The setup scripts + Makefile + dkms.conf already came from payload.list above; the .c/.h
@@ -139,9 +137,9 @@ $E2 e2cp "$TMP/10-r69.conf" "$FS:/etc/systemd/system/multi-user.target.d/10-r69.
 # headers) so the remote/power-button and 100 Mb/s Ethernet work out of the box. ---
 DKMSTMP="$(mktemp -d)"
 "$FW/fetch-dkms-src.sh" "$DKMSTMP/ir" "$DKMSTMP/phy"
-$E2 e2cp "$DKMSTMP/ir/rockchip_pwm_remotectl.c" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/rockchip_pwm_remotectl.c"
-$E2 e2cp "$DKMSTMP/ir/rockchip_pwm_remotectl.h" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/rockchip_pwm_remotectl.h"
-$E2 e2cp "$DKMSTMP/phy/rk630phy.c"              "$FS:/usr/src/rk630-phy-r69-1.0/rk630phy.c"
+e2cp "$DKMSTMP/ir/rockchip_pwm_remotectl.c" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/rockchip_pwm_remotectl.c"
+e2cp "$DKMSTMP/ir/rockchip_pwm_remotectl.h" "$FS:/usr/src/rockchip-pwm-remotectl-r69-1.0/rockchip_pwm_remotectl.h"
+e2cp "$DKMSTMP/phy/rk630phy.c"              "$FS:/usr/src/rk630-phy-r69-1.0/rk630phy.c"
 rm -rf "$DKMSTMP"
 
 # --- Bluetooth AutoEnable — edit main.conf only if the base already ships bluez. e2cp on macOS
@@ -149,29 +147,29 @@ rm -rf "$DKMSTMP"
 # ship no bluez; we NEVER auto-install it — the user installs bluez and re-runs r69-firstboot (the
 # login MOTD prompts for this). ---
 BTMAIN="$(mktemp)"
-if $E2 e2cp "$FS:/etc/bluetooth/main.conf" "$BTMAIN" 2>/dev/null && [ -s "$BTMAIN" ]; then
+if e2cp "$FS:/etc/bluetooth/main.conf" "$BTMAIN" 2>/dev/null && [ -s "$BTMAIN" ]; then
   if grep -qiE '^[[:space:]]*#?[[:space:]]*AutoEnable=' "$BTMAIN"; then
     sed -E 's/^[[:space:]]*#?[[:space:]]*AutoEnable=.*/AutoEnable=true/' "$BTMAIN" > "$BTMAIN.new"
   else
     cp "$BTMAIN" "$BTMAIN.new"; printf '\n[Policy]\nAutoEnable=true\n' >> "$BTMAIN.new"
   fi
-  $E2 e2cp "$BTMAIN.new" "$FS:/etc/bluetooth/main.conf"
+  e2cp "$BTMAIN.new" "$FS:/etc/bluetooth/main.conf"
 fi
 rm -f "$BTMAIN" "$BTMAIN.new"
 
 # ---- rebrand: the ROCK 2F base ships hostname "rock-2f" -> r69 ------------------------
-$E2 e2cp "$FS:/etc/hostname" "$TMP/oldhost" 2>/dev/null || true
+e2cp "$FS:/etc/hostname" "$TMP/oldhost" 2>/dev/null || true
 OLDH="$(tr -d '[:space:]' < "$TMP/oldhost" 2>/dev/null)"
 printf 'r69\n' > "$TMP/hostname"
-$E2 e2cp "$TMP/hostname" "$FS:/etc/hostname"
-if [ -n "$OLDH" ] && $E2 e2cp "$FS:/etc/hosts" "$TMP/hosts" 2>/dev/null; then
+e2cp "$TMP/hostname" "$FS:/etc/hostname"
+if [ -n "$OLDH" ] && e2cp "$FS:/etc/hosts" "$TMP/hosts" 2>/dev/null; then
   sed "s/$OLDH/r69/g" "$TMP/hosts" > "$TMP/hosts.new"
-  $E2 e2cp "$TMP/hosts.new" "$FS:/etc/hosts"
+  e2cp "$TMP/hosts.new" "$FS:/etc/hosts"
 fi
 # relabel the login MOTD board name (display only; BOARD= identifier stays for armbian tooling)
-if $E2 e2cp "$FS:/etc/armbian-release" "$TMP/arel" 2>/dev/null; then
+if e2cp "$FS:/etc/armbian-release" "$TMP/arel" 2>/dev/null; then
   sed 's/^BOARD_NAME=.*/BOARD_NAME="R69"/' "$TMP/arel" > "$TMP/arel.new"
-  $E2 e2cp "$TMP/arel.new" "$FS:/etc/armbian-release"
+  e2cp "$TMP/arel.new" "$FS:/etc/armbian-release"
 fi
 rm -rf "$TMP"
 

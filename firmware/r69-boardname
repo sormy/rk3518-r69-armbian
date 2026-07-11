@@ -1,0 +1,7 @@
+#!/bin/sh
+# Put the R69 login-banner name back after armbian-bsp upgrades reset it in /etc/armbian-release.
+# Cosmetic only — BOARD=rock-2f is left alone so apt/kernel tooling keeps matching the base.
+# Idempotent; run after every apt/dpkg operation by /etc/apt/apt.conf.d/99-r69-boardname.
+f=/etc/armbian-release
+[ -f "$f" ] && ! grep -q '^BOARD_NAME="R69"$' "$f" && sed -i 's/^BOARD_NAME=.*/BOARD_NAME="R69"/' "$f"
+exit 0

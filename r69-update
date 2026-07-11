@@ -44,6 +44,7 @@ while read -r mode src dest; do
   case "$mode" in ''|\#*) continue ;; esac
   install -D -m "$mode" "$FW/$src" "$dest"
 done < "$FW/payload.list"
+/usr/local/sbin/r69-boardname   # re-assert the login-banner name (apt upgrades reset it)
 
 echo "[2/5] refreshing DKMS driver sources + rebuilding"
 "$FW/fetch-dkms-src.sh" /usr/src/rockchip-pwm-remotectl-r69-1.0 /usr/src/rk630-phy-r69-1.0

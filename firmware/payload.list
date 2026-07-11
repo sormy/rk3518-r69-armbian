@@ -32,6 +32,11 @@
 0644 r69-bt.service                   /etc/systemd/system/r69-bt.service
 0755 r69-motd-bluetooth              /etc/update-motd.d/99-r69-bluetooth
 
+# login-banner board name: armbian-bsp upgrades reset BOARD_NAME in /etc/armbian-release; this
+# apt Post-Invoke hook puts "R69" back after every apt run (BOARD=rock-2f stays for the tooling)
+0755 r69-boardname                    /usr/local/sbin/r69-boardname
+0644 r69-boardname.apt                /etc/apt/apt.conf.d/99-r69-boardname
+
 # DTB master copy + kernel postinst.d hooks (persist our DTB, prep headers so DKMS builds)
 0644 board.dtb                        /usr/local/share/r69/board.dtb
 0755 r69-dtb-persist                  /etc/kernel/postinst.d/r69-dtb-persist
